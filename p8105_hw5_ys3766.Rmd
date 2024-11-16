@@ -6,9 +6,7 @@ output: github_document
 ---
 ```{r set up, include=FALSE}
 library(tidyverse)
-library(rvest)
-library(readxl)
-
+library(ggplot2)
 
 knitr::opts_chunk$set(
 	echo = TRUE,
@@ -57,6 +55,7 @@ sim_res =
 
 sim_res %>% 
   ggplot(aes(x = n, y = prob))+
+  geom_point()+
   geom_line()+
    ggtitle("Probability of Shared Birthdays by Group Size") +
   xlab("Group Size") +
@@ -126,3 +125,81 @@ results_summary %>%
 The sample average of μ across tests where the null is rejected is typically higher than the true μ, which is especially noticeable at lower true μ values and tends to converge as μ increases.
 
 When the null hypothesis is rejected, it is often because the sample mean is sufficiently extreme compared to the hypothesized mean. In cases where μ is closer to 0, but the null is rejected, it typically means that the sample mean was unusually high (or low), leading to an overestimate of μ. As μ increases, the likelihood of rejecting the null hypothesis because of random variation rather than the actual effect (i.e., the true μ) decreases, making the estimate more accurate.
+
+
+## Problem 3
+```{r}
+homicide_df = read_csv(file = "data/homicide-data.csv", 
+                       na = c("Unknown", "NA", "")) %>% 
+  mutate(
+    reported_date = as.Date(as.character(reported_date), 
+                            format = "%y%m%d"))
+```
+
+```{r}
+summary(homicide_df)
+```
+
+
+The homicide dataset comprises `r nrow(homicide_df)` homicide cases from various U.S. cities, spanning from `r min(homicide_df %>% pull(reported_date), na.rm = TRUE)` to `r max(homicide_df %>% pull(reported_date), na.rm = TRUE)`. Key variables include **victim details** (name, race, age, sex), **city** and **state** of the incident, **geographical coordinates**, and **case disposition status**. Notably, there is a significant amount of missing data, particularly for `reported_date` (`r sum(is.na(homicide_df %>% pull(reported_date)))` entries missing) and `victim_age` (`r sum(is.na(homicide_df %>% pull(victim_age)))` entries missing). The disposition statuses categorize whether cases remain open or are closed without arrest.
+
+
+```{r}
+homicide_summary <- homicide_df %>%
+  mutate(city_state = paste(city, state, sep = ", ")) %>%
+  group_by(city_state) %>%
+  summarise(
+    total_homicides = n(),
+    unsolved_homicides = sum(disposition %in% c("Closed without arrest", "Open/No arrest"), na.rm = TRUE),
+    .groups = 'drop'
+  ) %>% 
+  filter(city_state!="Tulsa, AL")
+
+knitr::kable(homicide_summary)
+```
+
+
+```{r}
+baltimore_result <- homicide_summary %>%
+  filter(city_state == "Baltimore, MD") %>%
+  summarise(prop_test_result = list(prop.test(unsolved_homicides, total_homicides))) %>%
+  mutate(tidy_result = map(prop_test_result, broom::tidy)) %>%
+  unnest(tidy_result) %>% 
+  select(estimate,conf.low, conf.high)
+  
+
+knitr::kable(baltimore_result, 
+             col.names = c("Estimate", "Lower CI", "Upper CI"),
+             caption = "Proportion of Unsolved Homicides in Baltimore, MD")
+
+```
+
+
+```{r}
+unsolved_prop <-  function(unsolved, total){
+  prop_test_result <- prop.test(unsolved, total)
+  broom::tidy(prop_test_result) %>% 
+    select(estimate, conf.low, conf.high)
+}
+
+homicide_test <- homicide_summary %>% 
+  mutate(
+    prop_results = purrr::map2(unsolved_homicides, total_homicides, ~unsolved_prop(.x, .y))
+  ) %>%
+  unnest(prop_results)
+
+knitr::kable(homicide_test)
+```
+
+```{r}
+ggplot(homicide_test, aes(x = reorder(city_state, -estimate), y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  labs(
+    title = "Proportion of Unsolved Homicides by City",
+    x = "City, State",
+    y = "Proportion of Unsolved Homicides"
+  ) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  
+```
+
